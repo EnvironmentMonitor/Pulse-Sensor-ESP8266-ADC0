@@ -16,15 +16,15 @@ Pulse :     boolean that is true when a heartbeat is sensed then false in time w
 This code is designed with output serial data to Processing sketch "PulseSensorAmped_Processing-xx"
 The Processing sketch is a simple data visualizer. 
 All the work to find the heartbeat and determine the heartrate happens in the code below.
-Pin 15 LED will blink with heartbeat.
-If you want to use pin 15 for something else, adjust the interrupt handler
+Pin 13 LED will blink with heartbeat.
+If you want to use pin 13 for something else, adjust the interrupt handler
 It will also fade an LED on pin fadePin with every beat. Put an LED and series resistor from fadePin to GND.
 Check here for detailed code walkthrough:
 http://pulsesensor.myshopify.com/pages/pulse-sensor-amped-arduino-v1dot1
 
 Code Version 1.2 by Joel Murphy & Yury Gitman  Spring 2013
 This update fixes the firstBeat and secondBeat flag usage so that realistic BPM is reported.
-Adapted By Environment Monitor AKA Gengus Kahn....
+
 */
 #include <Ticker.h>
 #include <Wire.h>  // Include Wire if you're using I2C
@@ -34,7 +34,7 @@ Adapted By Environment Monitor AKA Gengus Kahn....
 //////////////////////////
 // MicroOLED Definition //
 //////////////////////////
-#define PIN_RESET 13  // Connect RST to pin 9 (req. for SPI and I2C)
+#define PIN_RESET 15  // Connect RST to pin 9 (req. for SPI and I2C)
 //#define PIN_DC    8  // Connect DC to pin 8 (required for SPI)
 //#define PIN_CS    10 // Connect CS to pin 10 (required for SPI)
 #define DC_JUMPER 0
@@ -50,13 +50,15 @@ Adapted By Environment Monitor AKA Gengus Kahn....
 //MicroOLED oled(PIN_RESET, PIN_DC, PIN_CS);
 MicroOLED oled(PIN_RESET, DC_JUMPER); // Example I2C declaration
 
+const int WIDTH=64;
+const int HEIGHT=32;
+const int LENGTH=WIDTH;
 Ticker flipper;
 
 //  VARIABLES
 int blinkPin = 15;                // pin to blink led at each beat
 int fadePin = 12;                 // pin to do fancy classy fading blink at each beat
 int fadeRate = 0;                 // used to fade LED on with PWM on fadePin
-int lc = 0;                       // Used to refresh the display every other second
 
 
 // these variables are volatile because they are used during the interrupt service routine!
@@ -66,58 +68,71 @@ volatile int IBI = 600;             // holds the time between beats, must be see
 volatile boolean Pulse = false;     // true when pulse wave is high, false when it's low
 volatile boolean QS = false;        // becomes true when Arduoino finds a beat.
 
+// For the display
+
+int x;
+int y[LENGTH];
+
+void clearY(){
+  for(int i=0; i<LENGTH; i++){
+    y[i] = -1;
+  }
+}
+
+void drawY(){
+  oled.pixel(0, y[0]);
+  for(int i=1; i<LENGTH; i++){
+    if(y[i]!=-1){
+      //u8g.drawPixel(i, y[i]);
+      oled.line(i-1, y[i-1], i, y[i]);
+    }else{
+      break;
+    }
+  }
+}
+
 
 void setup(){
-  String title="heart";
   oled.begin();
-  int middleX = oled.getLCDWidth() / 2;
-  int middleY = oled.getLCDHeight() / 2;
-  // clear(ALL) will clear out the OLED's graphic memory.
-  // clear(PAGE) will clear the Arduino's display buffer.
-  oled.clear(PAGE);  // Clear the page
-  // Draw an outline on the screen:
-  oled.rect(0, 0, oled.getLCDWidth() - 1, oled.getLCDHeight());
-  oled.setFontType(1);
-  // Try to set the cursor in the middle of the screen
-  oled.setCursor(middleX - (oled.getFontWidth() * (title.length()/2)),middleY - (oled.getFontWidth() / 2));
-  // Print the title:
-  oled.print(title);
-  oled.display();
-  delay(3000);
+  oled.clear(PAGE);     // Clear the screen
+  x = 0;
+  clearY();
   pinMode(blinkPin,OUTPUT);         // pin that will blink to your heartbeat!
   pinMode(fadePin,OUTPUT);          // pin that will fade to your heartbeat!
   Serial.begin(115200);             // we agree to talk fast!
-  interruptSetup();                 // sets up to read Pulse Sensor signal every 2mS (Ticker - flipper) 
+  interruptSetup();                 // sets up to read Pulse Sensor signal every 2mS 
+   // UN-COMMENT THE NEXT LINE IF YOU ARE POWERING The Pulse Sensor AT LOW VOLTAGE, 
+   // AND APPLY THAT VOLTAGE TO THE A-REF PIN
+   //analogReference(EXTERNAL);   
 }
 
 
 
 void loop(){
-  lc++;
+  y[x] = map(Signal, 0, 1023, HEIGHT-1, 0);
+    drawY();
+  x++;
+  if(x >= WIDTH){
+        oled.clear(PAGE);
+    x = 0;
+    clearY();
+  }
+
   sendDataToProcessing('S', Signal);     // send Processing the raw Pulse Sensor data
   if (QS == true){                       // Quantified Self flag is true when arduino finds a heartbeat
         fadeRate = 255;                  // Set 'fadeRate' Variable to 255 to fade LED with pulse
         sendDataToProcessing('B',BPM);   // send heart rate with a 'B' prefix
         sendDataToProcessing('Q',IBI);   // send time between beats with a 'Q' prefix
         QS = false;                      // reset the Quantified Self flag for next time    
+        oled.setFontType(0);  // Set font to type 0
+        oled.setCursor(0, 32); // Set cursor to bottom line
+        oled.print("BPM = ");
+        oled.print(BPM);
+        oled.print("  ");
      }
-  
+
   ledFadeToBeat();
-  if(lc>=100){
-  lc=0;
-    // clear(ALL) will clear out the OLED's graphic memory.
-  // clear(PAGE) will clear the Arduino's display buffer.
-  oled.clear(PAGE);  // Clear the page
-  String title = "B P M = ";
-  // Draw an outline on the screen:
-  oled.setFontType(1);
-  // Try to set the cursor in the middle of the screen
-  oled.setCursor(0,0);
-  oled.print(title);
-  // Print the title:
-  oled.print(BPM);
-  oled.display();
-  }
+  oled.display();   
   delay(20);                             //  take a break
 }
 
@@ -133,9 +148,3 @@ void sendDataToProcessing(char symbol, int data ){
     Serial.print(symbol);                // symbol prefix tells Processing what type of data is coming
     Serial.println(data);                // the data to send culminating in a carriage return
   }
-
-
-
-
-
-
